@@ -7,7 +7,6 @@ import LeadDetail from './pages/LeadDetail';
 import Messages from './pages/Messages';
 import Settings from './pages/Settings';
 import Dealerships from './pages/Dealerships';
-import Locations from './pages/Locations';
 import UsersPage from './pages/Users';
 import Layout from './components/Layout';
 
@@ -46,9 +45,8 @@ export default function App() {
         <Route path="/login" element={user ? <Navigate to={getInitialRoute()} /> : <Login onLogin={handleLogin} />} />
         
         <Route element={user ? <Layout user={user} onLogout={handleLogout} /> : <Navigate to="/login" />}>
-          <Route path="/" element={user?.role === 'super_admin' ? <Dashboard /> : <Navigate to="/leads" />} />
+          <Route path="/" element={<Dashboard />} />
           <Route path="/dealerships" element={<Dealerships />} />
-          <Route path="/locations" element={<Locations />} />
           <Route path="/users" element={<UsersPage user={user} />} />
           <Route path="/leads" element={<Leads />} />
           <Route path="/leads/:id" element={<LeadDetail user={user} />} />

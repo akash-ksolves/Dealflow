@@ -16,15 +16,22 @@ export function initDb() {
   const tableInfo = db.prepare("PRAGMA table_info(users)").all() as any[];
   const dealershipIdCol = tableInfo.find(c => c.name === 'dealership_id');
   
-  const commTableInfo = db.prepare("PRAGMA table_info(communications)").all() as any[];
-  const userIdCol = commTableInfo.find(c => c.name === 'user_id');
+  const dealerTableInfo = db.prepare("PRAGMA table_info(dealerships)").all() as any[];
+  const dealerStatusCol = dealerTableInfo.find(c => c.name === 'status');
   
-  if ((dealershipIdCol?.notnull === 1) || (userIdCol?.notnull === 1)) {
+  const commTableInfo = db.prepare("PRAGMA table_info(communications)").all() as any[];
+  const subjectCol = commTableInfo.find(c => c.name === 'subject');
+  
+  const userLocTableInfo = db.prepare("PRAGMA table_info(user_locations)").all() as any[];
+  
+  if ((dealershipIdCol?.notnull === 1) || !dealerStatusCol || !subjectCol || userLocTableInfo.length === 0) {
     console.log('Migrating database: dropping old tables for schema update');
     db.exec(`
       DROP TABLE IF EXISTS tasks;
+      DROP TABLE IF EXISTS mentions;
       DROP TABLE IF EXISTS communications;
       DROP TABLE IF EXISTS leads;
+      DROP TABLE IF EXISTS user_locations;
       DROP TABLE IF EXISTS users;
       DROP TABLE IF EXISTS locations;
       DROP TABLE IF EXISTS roles;
@@ -36,6 +43,7 @@ export function initDb() {
     CREATE TABLE IF NOT EXISTS dealerships (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
+      status TEXT DEFAULT 'active', -- 'active', 'deleted'
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -44,6 +52,8 @@ export function initDb() {
       dealership_id INTEGER NOT NULL,
       name TEXT NOT NULL,
       address TEXT,
+      is_default INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'active', -- 'active', 'deleted'
       FOREIGN KEY (dealership_id) REFERENCES dealerships(id)
     );
 
@@ -55,7 +65,6 @@ export function initDb() {
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       dealership_id INTEGER,
-      location_id INTEGER,
       role_id INTEGER NOT NULL,
       name TEXT NOT NULL,
       email TEXT UNIQUE NOT NULL,
@@ -63,8 +72,15 @@ export function initDb() {
       status TEXT DEFAULT 'active',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (dealership_id) REFERENCES dealerships(id),
-      FOREIGN KEY (location_id) REFERENCES locations(id),
       FOREIGN KEY (role_id) REFERENCES roles(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS user_locations (
+      user_id INTEGER NOT NULL,
+      location_id INTEGER NOT NULL,
+      PRIMARY KEY (user_id, location_id),
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      FOREIGN KEY (location_id) REFERENCES locations(id)
     );
 
     CREATE TABLE IF NOT EXISTS leads (
@@ -92,9 +108,20 @@ export function initDb() {
       user_id INTEGER,
       type TEXT NOT NULL, -- 'email', 'sms', 'call', 'internal'
       direction TEXT NOT NULL, -- 'inbound', 'outbound'
+      subject TEXT,
       content TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (lead_id) REFERENCES leads(id),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS mentions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      communication_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      is_read INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (communication_id) REFERENCES communications(id),
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
 
@@ -132,18 +159,27 @@ export function initDb() {
   if (dealerCount.count === 0) {
     const dealerResult = db.prepare('INSERT INTO dealerships (name) VALUES (?)').run('Default Motors');
     const dealerId = dealerResult.lastInsertRowid;
+
+    // Seed Location
+    const locResult = db.prepare('INSERT INTO locations (dealership_id, name, address, is_default) VALUES (?, ?, ?, 1)')
+      .run(dealerId, 'Main Branch', '123 Dealer Row, Motor City, MC 12345');
+    const locationId = locResult.lastInsertRowid;
     
     const principalRole = db.prepare('SELECT id FROM roles WHERE name = ?').get('principal') as any;
     const adminHash = bcrypt.hashSync('principal123', 10);
     
-    db.prepare('INSERT INTO users (dealership_id, role_id, name, email, password) VALUES (?, ?, ?, ?, ?)')
+    const userResult = db.prepare('INSERT INTO users (dealership_id, role_id, name, email, password) VALUES (?, ?, ?, ?, ?)')
       .run(dealerId, principalRole.id, 'Principal User', 'principal@dealflow.com', adminHash); 
+    const userId = userResult.lastInsertRowid;
+
+    // Link principal to location
+    db.prepare('INSERT INTO user_locations (user_id, location_id) VALUES (?, ?)').run(userId, locationId);
 
     // Seed Leads
-    const insertLead = db.prepare('INSERT INTO leads (dealership_id, first_name, last_name, email, phone, source, vehicle_interest, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-    insertLead.run(dealerId, 'John', 'Doe', 'john@example.com', '555-0101', 'Web Inquiry', '2024 Ford F-150', 'new');
-    insertLead.run(dealerId, 'Jane', 'Smith', 'jane@example.com', '555-0102', 'Walk-in', '2024 Mustang GT', 'contacted');
-    insertLead.run(dealerId, 'Robert', 'Brown', 'robert@example.com', '555-0103', 'Referral', '2024 Explorer', 'new');
+    const insertLead = db.prepare('INSERT INTO leads (dealership_id, location_id, first_name, last_name, email, phone, source, vehicle_interest, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    insertLead.run(dealerId, locationId, 'John', 'Doe', 'john@example.com', '555-0101', 'Web Inquiry', '2024 Ford F-150', 'new');
+    insertLead.run(dealerId, locationId, 'Jane', 'Smith', 'jane@example.com', '555-0102', 'Walk-in', '2024 Mustang GT', 'contacted');
+    insertLead.run(dealerId, locationId, 'Robert', 'Brown', 'robert@example.com', '555-0103', 'Referral', '2024 Explorer', 'new');
   }
 }
 
