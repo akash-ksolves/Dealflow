@@ -1,21 +1,50 @@
-import { useState } from 'react';
+import { useState, ChangeEvent } from 'react';
 import { 
   User, Shield, Lock, Bell, Globe, 
   Check, Loader2, AlertCircle, Camera
 } from 'lucide-react';
 
-export default function Settings() {
+export default function Settings({ onUpdate }: { onUpdate?: () => void }) {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [profilePic, setProfilePic] = useState(user.profile_pic || '');
+
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfilePic(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   const handleSave = async () => {
     setSubmitting(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    setSubmitting(false);
-    setSuccess(true);
-    setTimeout(() => setSuccess(false), 3000);
+    try {
+      const res = await fetch('/api/profile/pic', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ profile_pic: profilePic })
+      });
+
+      if (res.ok) {
+        const updatedUser = { ...user, profile_pic: profilePic };
+        localStorage.setItem('user', JSON.stringify(updatedUser));
+        onUpdate?.();
+        setSuccess(true);
+        setTimeout(() => setSuccess(false), 3000);
+      }
+    } catch (err) {
+      console.error('Failed to save profile pic:', err);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -60,12 +89,17 @@ export default function Settings() {
 
             <div className="flex flex-col md:flex-row gap-12 mb-12">
               <div className="relative group">
-                <div className="w-32 h-32 rounded-[2.5rem] bg-slate-100 flex items-center justify-center text-4xl font-black text-slate-300 border-4 border-white shadow-inner">
-                  {user.name?.[0]}
+                <div className="w-32 h-32 rounded-[2.5rem] bg-slate-100 flex items-center justify-center text-4xl font-black text-slate-300 border-4 border-white shadow-inner overflow-hidden">
+                  {profilePic ? (
+                    <img src={profilePic} alt="Profile" className="w-full h-full object-cover" />
+                  ) : (
+                    user.name?.[0]
+                  )}
                 </div>
-                <button className="absolute -bottom-2 -right-2 p-3 bg-brand-600 text-white rounded-2xl shadow-lg shadow-brand-100 hover:scale-110 transition-transform">
+                <label className="absolute -bottom-2 -right-2 p-3 bg-brand-600 text-white rounded-2xl shadow-lg shadow-brand-100 hover:scale-110 transition-transform cursor-pointer">
                   <Camera className="w-4 h-4" />
-                </button>
+                  <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
+                </label>
               </div>
               <div className="flex-1 space-y-8">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">

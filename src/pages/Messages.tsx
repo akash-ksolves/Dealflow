@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import Loader from '../components/Loader';
 import { 
   Search, MessageSquare, Phone, Mail, Send, User, 
   ChevronRight, Info, Clock, MoreVertical, Paperclip, 
@@ -37,13 +38,6 @@ export default function Messages() {
         const leadList = Array.isArray(data) ? data : [];
         setLeads(leadList);
         setLoading(false);
-
-        // Handle leadId from URL
-        const leadIdFromUrl = searchParams.get('leadId');
-        if (leadIdFromUrl) {
-          const lead = leadList.find((l: any) => l.id === parseInt(leadIdFromUrl));
-          if (lead) setSelectedLead(lead);
-        }
       });
 
     // Fetch Users for mentions
@@ -53,19 +47,25 @@ export default function Messages() {
 
     // Setup Socket
     socketRef.current = io();
-    socketRef.current.on('new-message', (message) => {
-      setMessages(prev => {
-        if (selectedLead && message.leadId === selectedLead.id) {
-          return [...prev, message];
-        }
-        return prev;
-      });
+    
+    socketRef.current.on('connect', () => {
+      console.log('Socket connected');
     });
 
     return () => {
       socketRef.current?.disconnect();
     };
-  }, [selectedLead, searchParams]);
+  }, []);
+
+  useEffect(() => {
+    if (leads.length > 0) {
+      const leadIdFromUrl = searchParams.get('leadId');
+      if (leadIdFromUrl) {
+        const lead = leads.find((l: any) => l.id === parseInt(leadIdFromUrl));
+        if (lead) setSelectedLead(lead);
+      }
+    }
+  }, [leads, searchParams]);
 
   useEffect(() => {
     if (selectedLead) {
@@ -76,6 +76,16 @@ export default function Messages() {
       
       socketRef.current?.emit('join-lead', selectedLead.id);
     }
+
+    socketRef.current?.off('new-message');
+    socketRef.current?.on('new-message', (message) => {
+      setMessages(prev => {
+        if (selectedLead && message.leadId === selectedLead.id) {
+          return [...prev, message];
+        }
+        return prev;
+      });
+    });
   }, [selectedLead]);
 
   useEffect(() => {
@@ -130,30 +140,44 @@ export default function Messages() {
         </div>
         
         <div className="flex-1 overflow-y-auto">
-          {filteredLeads.map(lead => (
-            <button
-              key={lead.id}
-              onClick={() => setSelectedLead(lead)}
-              className={cn(
-                "w-full p-4 flex items-center gap-4 transition-all border-b border-slate-100/50",
-                selectedLead?.id === lead.id ? "bg-white shadow-sm z-10" : "hover:bg-white/50"
-              )}
-            >
-              <div className="relative">
-                <div className="w-12 h-12 rounded-2xl bg-brand-100 text-brand-600 flex items-center justify-center font-bold text-sm shadow-inner">
-                  {lead.first_name[0]}{lead.last_name[0]}
+          {loading ? (
+            <div className="p-10">
+              <Loader message="Loading Chats..." />
+            </div>
+          ) : filteredLeads.map(lead => {
+            const isActive = selectedLead?.id === lead.id;
+            return (
+              <button
+                key={lead.id}
+                onClick={() => setSelectedLead(lead)}
+                className={cn(
+                  "w-full p-4 flex items-center gap-4 transition-all border-b border-slate-100/50",
+                  isActive 
+                    ? "bg-brand-50 text-brand-600 shadow-sm z-10" 
+                    : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+                )}
+              >
+                <div className="relative">
+                  <div className={cn(
+                    "w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-sm shadow-inner transition-colors",
+                    isActive ? "bg-white text-brand-600" : "bg-brand-100 text-brand-600"
+                  )}>
+                    {lead.first_name[0]}{lead.last_name[0]}
+                  </div>
                 </div>
-              </div>
-              <div className="flex-1 text-left min-w-0">
-                <div className="flex justify-between items-baseline mb-1">
-                  <p className="text-sm font-bold text-slate-900 truncate">{lead.first_name} {lead.last_name}</p>
+                <div className="flex-1 text-left min-w-0">
+                  <div className="flex justify-between items-baseline mb-1">
+                    <p className={cn("text-sm font-bold truncate", isActive ? "text-brand-600" : "text-slate-900")}>
+                      {lead.first_name} {lead.last_name}
+                    </p>
+                  </div>
+                  <p className={cn("text-xs truncate line-clamp-1", isActive ? "text-brand-400" : "text-slate-500")}>
+                    {lead.vehicle_interest || 'General Inquiry'}
+                  </p>
                 </div>
-                <p className="text-xs text-slate-500 truncate line-clamp-1">
-                  {lead.vehicle_interest || 'General Inquiry'}
-                </p>
-              </div>
-            </button>
-          ))}
+              </button>
+            );
+          })}
         </div>
       </aside>
 
@@ -251,7 +275,7 @@ export default function Messages() {
                     className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-500/20 text-sm font-medium"
                   />
                 )}
-                <div className="flex items-end gap-3 bg-slate-50 rounded-2xl p-2 border border-slate-100 focus-within:border-brand-300 focus-within:ring-4 focus-within:ring-brand-500/5 transition-all">
+                <div className="flex items-end gap-3 bg-slate-50 rounded-2xl p-2 border border-slate-100 transition-all">
                   <button type="button" className="p-2 text-slate-400 hover:text-slate-600 transition-colors">
                     <Paperclip className="w-5 h-5" />
                   </button>
@@ -264,7 +288,7 @@ export default function Messages() {
                       else if (!e.target.value.includes('@')) setShowMentions(false);
                     }}
                     placeholder={`Type your ${commType} message...`}
-                    className="flex-1 bg-transparent border-none focus:ring-0 text-sm py-2 resize-none max-h-32"
+                    className="flex-1 bg-transparent border-none focus:ring-0 focus:outline-none text-sm py-2 resize-none max-h-32"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();

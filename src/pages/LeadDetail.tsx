@@ -11,6 +11,7 @@ export default function LeadDetail({ user }: { user: any }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const [lead, setLead] = useState<any>(null);
+  const [activities, setActivities] = useState<any[]>([]);
   const [isEditing, setIsEditing] = useState(false);
   const [isCallModalOpen, setIsCallModalOpen] = useState(false);
   const [editForm, setEditForm] = useState({ email: '', phone: '', status: '' });
@@ -25,11 +26,20 @@ export default function LeadDetail({ user }: { user: any }) {
   const fetchLead = async () => {
     const headers = { 'Authorization': `Bearer ${localStorage.getItem('token')}` };
     try {
-      const res = await fetch(`/api/leads/${id}`, { headers });
-      if (res.ok) {
-        const data = await res.json();
+      const [leadRes, commsRes] = await Promise.all([
+        fetch(`/api/leads/${id}`, { headers }),
+        fetch(`/api/leads/${id}/communications`, { headers })
+      ]);
+
+      if (leadRes.ok) {
+        const data = await leadRes.json();
         setLead(data);
         setEditForm({ email: data.email, phone: data.phone, status: data.status });
+      }
+
+      if (commsRes.ok) {
+        const commsData = await commsRes.json();
+        setActivities(commsData);
       }
     } catch (err) {
       console.error('Lead fetch error:', err);
@@ -199,6 +209,13 @@ export default function LeadDetail({ user }: { user: any }) {
                 )}
               </div>
               <div className="space-y-3">
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Location</label>
+                <div className="flex items-center gap-3 text-slate-900">
+                  <MapPin className="w-4 h-4 text-slate-300" />
+                  <p className="font-bold">{lead.location_name || 'Not assigned'}</p>
+                </div>
+              </div>
+              <div className="space-y-3">
                 <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Lead Source</label>
                 <div className="flex items-center gap-3 text-slate-900">
                   <Tag className="w-4 h-4 text-slate-300" />
@@ -262,14 +279,33 @@ export default function LeadDetail({ user }: { user: any }) {
                   <p className="text-[10px] text-slate-400 font-bold mt-2">{format(new Date(lead.created_at), 'MMM d, yyyy • HH:mm')}</p>
                 </div>
               </div>
-              <div className="flex gap-6">
-                <div className="flex flex-col items-center">
-                  <div className="w-3 h-3 rounded-full bg-slate-200"></div>
+              
+              {activities.map((activity, idx) => (
+                <div key={activity.id} className="flex gap-6">
+                  <div className="flex flex-col items-center">
+                    <div className="w-3 h-3 rounded-full bg-brand-500 shadow-sm shadow-brand-100"></div>
+                    {idx !== activities.length - 1 && <div className="w-0.5 flex-1 bg-slate-100 my-2"></div>}
+                  </div>
+                  <div className="pb-2">
+                    <p className="text-xs font-black uppercase tracking-widest text-slate-900">
+                      {activity.type.toUpperCase()} {activity.direction === 'inbound' ? 'Received' : 'Sent'}
+                    </p>
+                    <p className="text-[10px] text-slate-500 mt-1 line-clamp-2">{activity.content}</p>
+                    <p className="text-[10px] text-slate-400 font-bold mt-2">{format(new Date(activity.created_at), 'MMM d, yyyy • HH:mm')}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-xs font-black uppercase tracking-widest text-slate-400 italic">No further activity</p>
+              ))}
+
+              {activities.length === 0 && (
+                <div className="flex gap-6">
+                  <div className="flex flex-col items-center">
+                    <div className="w-3 h-3 rounded-full bg-slate-200"></div>
+                  </div>
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-widest text-slate-400 italic">No further activity</p>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </section>
 

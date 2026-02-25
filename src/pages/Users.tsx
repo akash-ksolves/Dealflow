@@ -1,7 +1,8 @@
 import { useState, useEffect, FormEvent } from 'react';
+import Loader from '../components/Loader';
 import { 
   Plus, User, Mail, Shield, MapPin, Loader2, 
-  Edit2, Trash2, Check, X, ChevronRight, Search
+  Edit2, Trash2, Check, X, ChevronRight, Search, Camera
 } from 'lucide-react';
 
 export default function UsersPage({ user: currentUser }: { user: any }) {
@@ -16,7 +17,8 @@ export default function UsersPage({ user: currentUser }: { user: any }) {
     email: '',
     password: '',
     roleName: '',
-    locationIds: [] as number[]
+    locationIds: [] as number[],
+    profile_pic: ''
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,7 +73,7 @@ export default function UsersPage({ user: currentUser }: { user: any }) {
       if (res.ok) {
         setIsModalOpen(false);
         setEditingUser(null);
-        setFormData({ name: '', email: '', password: '', roleName: '', locationIds: [] });
+        setFormData({ name: '', email: '', password: '', roleName: '', locationIds: [], profile_pic: '' });
         fetchData();
       } else {
         setError(data.error || 'An error occurred while saving the user.');
@@ -99,7 +101,8 @@ export default function UsersPage({ user: currentUser }: { user: any }) {
       email: u.email,
       password: '',
       roleName: u.role,
-      locationIds: u.location_ids ? u.location_ids.toString().split(',').map(Number) : []
+      locationIds: u.location_ids ? u.location_ids.toString().split(',').map(Number) : [],
+      profile_pic: u.profile_pic || ''
     });
     setIsModalOpen(true);
   };
@@ -114,7 +117,12 @@ export default function UsersPage({ user: currentUser }: { user: any }) {
   };
 
   const filteredRoles = roles.filter(r => {
-    if (currentUser.role === 'principal') return r.name !== 'super_admin' && r.name !== 'principal';
+    if (currentUser.role === 'principal' || currentUser.role === 'admin') {
+      if (r.name === 'super_admin') return false;
+      if (r.name === 'principal') return false;
+      if (currentUser.role === 'admin' && r.name === 'admin') return false;
+      return true;
+    }
     return false;
   });
 
@@ -123,7 +131,7 @@ export default function UsersPage({ user: currentUser }: { user: any }) {
     u.email.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const canCreateUsers = currentUser.role === 'principal';
+  const canCreateUsers = currentUser.role === 'principal' || currentUser.role === 'admin';
 
   if (currentUser.role === 'super_admin') {
     return (
@@ -146,7 +154,7 @@ export default function UsersPage({ user: currentUser }: { user: any }) {
           <button 
             onClick={() => {
               setEditingUser(null);
-              setFormData({ name: '', email: '', password: '', roleName: '', locationIds: [] });
+              setFormData({ name: '', email: '', password: '', roleName: '', locationIds: [], profile_pic: '' });
               setIsModalOpen(true);
             }}
             className="bg-brand-600 text-white px-8 py-4 rounded-2xl font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-brand-700 transition-all shadow-lg shadow-brand-100"
@@ -188,8 +196,7 @@ export default function UsersPage({ user: currentUser }: { user: any }) {
               {loading ? (
                 <tr>
                   <td colSpan={4} className="px-8 py-20 text-center">
-                    <Loader2 className="w-8 h-8 animate-spin text-brand-600 mx-auto mb-4" />
-                    <p className="text-slate-400 font-medium italic">Loading team members...</p>
+                    <Loader message="Loading Team..." />
                   </td>
                 </tr>
               ) : filteredUsers.length === 0 ? (
@@ -204,8 +211,12 @@ export default function UsersPage({ user: currentUser }: { user: any }) {
                   <tr key={u.id} className="group hover:bg-slate-50/50 transition-colors">
                     <td className="px-8 py-6">
                       <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-2xl bg-brand-100 text-brand-600 flex items-center justify-center font-black text-sm shadow-inner">
-                          {u.name.charAt(0)}
+                        <div className="w-12 h-12 rounded-2xl bg-brand-100 text-brand-600 flex items-center justify-center font-black text-sm shadow-inner overflow-hidden">
+                          {u.profile_pic ? (
+                            <img src={u.profile_pic} alt={u.name} className="w-full h-full object-cover" />
+                          ) : (
+                            u.name.charAt(0)
+                          )}
                         </div>
                         <div>
                           <p className="font-bold text-slate-900">{u.name}</p>
@@ -244,23 +255,51 @@ export default function UsersPage({ user: currentUser }: { user: any }) {
 
       {isModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-900/80 backdrop-blur-sm">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-2xl p-10 shadow-2xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-8">
+          <div className="bg-white rounded-[2.5rem] w-full max-w-2xl p-10 shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between mb-8 shrink-0">
               <h2 className="text-3xl font-black tracking-tighter text-slate-900 uppercase">{editingUser ? 'Edit Member' : 'New Member'}</h2>
               <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors">
                 <X className="w-6 h-6 text-slate-400" />
               </button>
             </div>
             
-            {error && (
-              <div className="mb-8 p-4 bg-red-50 border border-red-100 text-red-600 text-xs font-black uppercase tracking-widest rounded-2xl">
-                {error}
-              </div>
-            )}
+            <div className="overflow-y-auto pr-4 -mr-4 custom-scrollbar flex-1">
+              {error && (
+                <div className="mb-8 p-4 bg-red-50 border border-red-100 text-red-600 text-xs font-black uppercase tracking-widest rounded-2xl">
+                  {error}
+                </div>
+              )}
 
-            <form onSubmit={handleSubmit} className="space-y-8">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-4">
+              <form onSubmit={handleSubmit} className="space-y-8 pb-4">
+              <div className="flex items-center gap-6">
+                <div className="relative group">
+                  <div className="w-24 h-24 rounded-3xl bg-slate-100 flex items-center justify-center text-2xl font-black text-slate-300 border-4 border-white shadow-inner overflow-hidden">
+                    {formData.profile_pic ? (
+                      <img src={formData.profile_pic} alt="Preview" className="w-full h-full object-cover" />
+                    ) : (
+                      <User className="w-8 h-8" />
+                    )}
+                  </div>
+                  <label className="absolute -bottom-2 -right-2 p-2.5 bg-brand-600 text-white rounded-xl shadow-lg shadow-brand-100 hover:scale-110 transition-transform cursor-pointer">
+                    <Camera className="w-4 h-4" />
+                    <input 
+                      type="file" 
+                      className="hidden" 
+                      accept="image/*" 
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onloadend = () => {
+                            setFormData({...formData, profile_pic: reader.result as string});
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }} 
+                    />
+                  </label>
+                </div>
+                <div className="flex-1 space-y-4">
                   <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Full Name</label>
                   <input
                     required
@@ -271,17 +310,18 @@ export default function UsersPage({ user: currentUser }: { user: any }) {
                     placeholder="John Doe"
                   />
                 </div>
-                <div className="space-y-4">
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Email Address</label>
-                  <input
-                    required
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({...formData, email: e.target.value})}
-                    className="w-full px-6 py-4 bg-slate-50 border-none rounded-2xl focus:ring-4 focus:ring-brand-500/10 transition-all font-bold text-slate-900"
-                    placeholder="john@dealership.com"
-                  />
-                </div>
+              </div>
+
+              <div className="space-y-4">
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Email Address</label>
+                <input
+                  required
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => setFormData({...formData, email: e.target.value})}
+                  className="w-full px-6 py-4 bg-slate-50 border-none rounded-2xl focus:ring-4 focus:ring-brand-500/10 transition-all font-bold text-slate-900"
+                  placeholder="john@dealership.com"
+                />
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

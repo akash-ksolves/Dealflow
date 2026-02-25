@@ -1,5 +1,6 @@
 import { useState, useEffect, FormEvent } from 'react';
 import { Link } from 'react-router-dom';
+import Loader from '../components/Loader';
 import { 
   Search, Filter, Plus, ChevronRight, Mail, Phone, 
   Loader2, MapPin, Tag, X, Calendar, User, 
@@ -71,6 +72,8 @@ export default function Leads() {
           firstName: '', lastName: '', email: '', phone: '',
           source: 'Website', vehicleInterest: '', locationId: '', status: 'new'
         });
+        setSearchQuery('');
+        setStatusFilter('all');
         fetchData();
       }
     } catch (err) {
@@ -80,19 +83,23 @@ export default function Leads() {
     }
   };
 
-  const openEditLead = (lead: any) => {
-    setEditingLead(lead);
-    setFormData({
-      firstName: lead.first_name,
-      lastName: lead.last_name,
-      email: lead.email,
-      phone: lead.phone,
-      source: lead.source,
-      vehicleInterest: lead.vehicle_interest,
-      locationId: lead.location_id || '',
-      status: lead.status
-    });
-    setIsModalOpen(true);
+  const handleStatusUpdate = async (leadId: number, newStatus: string) => {
+    try {
+      const res = await fetch(`/api/leads/${leadId}/status`, {
+        method: 'PATCH',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ status: newStatus })
+      });
+
+      if (res.ok) {
+        setLeads(leads.map(l => l.id === leadId ? { ...l, status: newStatus } : l));
+      }
+    } catch (err) {
+      console.error('Status update error:', err);
+    }
   };
 
   const filteredLeads = leads.filter(l => {
@@ -175,6 +182,7 @@ export default function Leads() {
                 <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-slate-400">Lead Details</th>
                 <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-slate-400">Interest</th>
                 <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-slate-400">Source</th>
+                <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-slate-400">Location</th>
                 <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-slate-400">Status</th>
                 <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Actions</th>
               </tr>
@@ -183,8 +191,7 @@ export default function Leads() {
               {loading ? (
                 <tr>
                   <td colSpan={5} className="px-8 py-20 text-center">
-                    <Loader2 className="w-8 h-8 animate-spin text-brand-600 mx-auto mb-4" />
-                    <p className="text-slate-400 font-medium italic">Syncing pipeline...</p>
+                    <Loader message="Syncing Pipeline..." />
                   </td>
                 </tr>
               ) : filteredLeads.length === 0 ? (
@@ -227,21 +234,31 @@ export default function Leads() {
                       </span>
                     </td>
                     <td className="px-8 py-6">
-                      <span className={cn(
-                        "text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-xl border transition-all",
-                        getStatusColor(lead.status)
-                      )}>
-                        {lead.status}
-                      </span>
+                      <div className="flex items-center gap-2 text-slate-600">
+                        <MapPin className="w-3.5 h-3.5 text-slate-300" />
+                        <span className="text-xs font-bold">{lead.location_name || 'N/A'}</span>
+                      </div>
+                    </td>
+                    <td className="px-8 py-6">
+                      <select
+                        value={lead.status}
+                        onChange={(e) => handleStatusUpdate(lead.id, e.target.value)}
+                        className={cn(
+                          "text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-xl border transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-brand-500/20",
+                          getStatusColor(lead.status)
+                        )}
+                      >
+                        <option value="new">New</option>
+                        <option value="contacted">Contacted</option>
+                        <option value="working">Working</option>
+                        <option value="closed">Closed</option>
+                      </select>
                     </td>
                     <td className="px-8 py-6">
                       <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                         <Link to={`/messages?leadId=${lead.id}`} className="p-3 bg-white text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-xl border border-slate-100 shadow-sm transition-all">
                           <Mail className="w-4 h-4" />
                         </Link>
-                        <button onClick={() => openEditLead(lead)} className="p-3 bg-white text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl border border-slate-100 shadow-sm transition-all">
-                          <Edit2 className="w-4 h-4" />
-                        </button>
                         <Link to={`/leads/${lead.id}`} className="p-3 bg-white text-slate-400 hover:text-slate-900 hover:bg-slate-50 rounded-xl border border-slate-100 shadow-sm transition-all">
                           <ArrowUpRight className="w-4 h-4" />
                         </Link>

@@ -27,6 +27,13 @@ export default function App() {
     localStorage.setItem('token', data.token);
   };
 
+  const refreshUser = () => {
+    const savedUser = localStorage.getItem('user');
+    if (savedUser) {
+      setUser(JSON.parse(savedUser));
+    }
+  };
+
   const handleLogout = () => {
     setUser(null);
     localStorage.removeItem('user');
@@ -51,8 +58,8 @@ export default function App() {
           <Route path="/leads" element={<Leads />} />
           <Route path="/leads/:id" element={<LeadDetail user={user} />} />
           <Route path="/messages" element={<Messages />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/profile" element={<Settings />} /> {/* Reuse settings for now */}
+          <Route path="/settings" element={<Settings onUpdate={refreshUser} />} />
+          <Route path="/profile" element={<Settings onUpdate={refreshUser} />} /> {/* Reuse settings for now */}
         </Route>
 
         <Route path="*" element={<Navigate to={getInitialRoute()} />} />

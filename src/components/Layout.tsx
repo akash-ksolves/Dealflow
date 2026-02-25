@@ -17,12 +17,40 @@ export default function Layout({ user, onLogout }: { user: any, onLogout: () => 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [dealershipDetails, setDealershipDetails] = useState<{ name: string, locations: string[] } | null>(null);
 
   useEffect(() => {
     fetchNotifications();
+    fetchDealershipDetails();
     const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  const fetchDealershipDetails = async () => {
+    try {
+      const res = await fetch('/api/dealership/details', {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDealershipDetails(data);
+      }
+    } catch (err) {
+      console.error('Dealership details fetch error:', err);
+    }
+  };
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (showNotifications && !target.closest('.notifications-container')) {
+        setShowNotifications(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showNotifications]);
 
   const fetchNotifications = async () => {
     try {
@@ -47,7 +75,34 @@ export default function Layout({ user, onLogout }: { user: any, onLogout: () => 
     { name: 'Settings', href: '/settings', icon: Settings, roles: ['super_admin', 'principal', 'admin', 'user'] },
   ].filter(item => item.roles.includes(user.role));
 
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const unreadCount = notifications.filter(n => !n.is_read).length;
+
+  const markAsRead = async (id: number, link?: string) => {
+    try {
+      await fetch(`/api/notifications/${id}/read`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      setNotifications(notifications.map(n => n.id === id ? { ...n, is_read: 1 } : n));
+      if (link) {
+        window.location.href = link;
+      }
+    } catch (err) {
+      console.error('Mark as read error:', err);
+    }
+  };
+
+  const clearAll = async () => {
+    try {
+      await fetch('/api/notifications', {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      setNotifications([]);
+    } catch (err) {
+      console.error('Clear notifications error:', err);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex overflow-hidden">
@@ -67,7 +122,7 @@ export default function Layout({ user, onLogout }: { user: any, onLogout: () => 
             </div>
           </div>
 
-          <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto no-scrollbar">
+          <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto">
             {navigation.map((item) => {
               const isActive = location.pathname === item.href;
               return (
@@ -124,66 +179,90 @@ export default function Layout({ user, onLogout }: { user: any, onLogout: () => 
             </button>
             <div className="hidden md:flex items-center gap-2 px-4 py-2 bg-slate-50 rounded-xl border border-slate-100">
               <Globe className="w-4 h-4 text-slate-400" />
-              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Global Network Active</span>
+              <div className="flex flex-col">
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-900 leading-none">
+                  {dealershipDetails?.name || 'Global Network Active'}
+                </span>
+                {dealershipDetails?.locations && dealershipDetails.locations.length > 0 && (
+                  <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-1 truncate max-w-[200px]">
+                    {dealershipDetails.locations.join(' • ')}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
           <div className="flex items-center gap-3 md:gap-6">
-            <div className="hidden sm:flex items-center gap-2">
-              <Link to="/leads" className="flex items-center gap-2 px-4 py-2 bg-brand-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-brand-700 transition-all shadow-lg shadow-brand-100">
-                <Plus className="w-4 h-4" />
-                Quick Lead
-              </Link>
-            </div>
-
-            <div className="relative">
-              <button 
-                onClick={() => setShowNotifications(!showNotifications)}
-                className="p-3 bg-slate-50 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-xl border border-slate-100 transition-all relative"
-              >
-                <Bell className="w-5 h-5" />
-                {unreadCount > 0 && (
-                  <span className="absolute top-2 right-2 w-4 h-4 bg-red-500 text-white text-[8px] font-black rounded-full flex items-center justify-center border-2 border-white">
-                    {unreadCount}
-                  </span>
-                )}
-              </button>
-
-              {showNotifications && (
-                <div className="absolute right-0 mt-4 w-80 bg-white rounded-3xl border border-slate-200 shadow-2xl shadow-slate-900/10 overflow-hidden z-50 animate-in fade-in slide-in-from-top-4 duration-200">
-                  <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-                    <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-900">Notifications</h3>
-                    <span className="px-2 py-1 bg-brand-50 text-brand-600 text-[8px] font-black rounded-lg uppercase">{unreadCount} New</span>
-                  </div>
-                  <div className="max-h-96 overflow-y-auto p-2">
-                    {notifications.length === 0 ? (
-                      <div className="p-8 text-center">
-                        <Bell className="w-8 h-8 text-slate-100 mx-auto mb-3" />
-                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">All caught up</p>
-                      </div>
-                    ) : (
-                      notifications.map((n) => (
-                        <button key={n.id} className="w-full p-4 hover:bg-slate-50 rounded-2xl text-left transition-colors flex gap-4 items-start">
-                          <div className={cn(
-                            "w-2 h-2 rounded-full mt-1.5 shrink-0",
-                            n.read ? "bg-slate-200" : "bg-brand-500"
-                          )} />
-                          <div>
-                            <p className="text-xs font-bold text-slate-900 leading-relaxed">{n.message}</p>
-                            <p className="text-[8px] text-slate-400 font-black uppercase tracking-widest mt-2">Just now</p>
-                          </div>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                  <div className="p-4 bg-slate-50 border-t border-slate-100">
-                    <button className="w-full py-3 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-brand-600 transition-colors">Clear All</button>
-                  </div>
+            {user.role !== 'super_admin' && (
+              <>
+                <div className="hidden sm:flex items-center gap-2">
+                  <Link to="/leads" className="flex items-center gap-2 px-4 py-2 bg-brand-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-brand-700 transition-all shadow-lg shadow-brand-100">
+                    <Plus className="w-4 h-4" />
+                    Quick Lead
+                  </Link>
                 </div>
-              )}
-            </div>
 
-            <div className="w-px h-8 bg-slate-200 hidden md:block"></div>
+                <div className="relative notifications-container">
+                  <button 
+                    onClick={() => setShowNotifications(!showNotifications)}
+                    className="p-3 bg-slate-50 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-xl border border-slate-100 transition-all relative"
+                  >
+                    <Bell className="w-5 h-5" />
+                    {unreadCount > 0 && (
+                      <span className="absolute top-2 right-2 w-4 h-4 bg-red-500 text-white text-[8px] font-black rounded-full flex items-center justify-center border-2 border-white">
+                        {unreadCount}
+                      </span>
+                    )}
+                  </button>
+
+                  {showNotifications && (
+                    <div className="absolute right-0 mt-4 w-80 bg-white rounded-3xl border border-slate-200 shadow-2xl shadow-slate-900/10 overflow-hidden z-50 animate-in fade-in slide-in-from-top-4 duration-200">
+                      <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+                        <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-900">Notifications</h3>
+                        <span className="px-2 py-1 bg-brand-50 text-brand-600 text-[8px] font-black rounded-lg uppercase">{unreadCount} New</span>
+                      </div>
+                      <div className="max-h-96 overflow-y-auto p-2">
+                        {notifications.length === 0 ? (
+                          <div className="p-8 text-center">
+                            <Bell className="w-8 h-8 text-slate-100 mx-auto mb-3" />
+                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">All caught up</p>
+                          </div>
+                        ) : (
+                          notifications.map((n) => (
+                            <button 
+                              key={n.id} 
+                              onClick={() => markAsRead(n.id, n.link)}
+                              className="w-full p-4 hover:bg-slate-50 rounded-2xl text-left transition-colors flex gap-4 items-start"
+                            >
+                              <div className={cn(
+                                "w-2 h-2 rounded-full mt-1.5 shrink-0",
+                                n.is_read ? "bg-slate-200" : "bg-brand-500"
+                              )} />
+                              <div>
+                                <p className="text-xs font-bold text-slate-900 leading-relaxed">{n.message}</p>
+                                <p className="text-[8px] text-slate-400 font-black uppercase tracking-widest mt-2">
+                                  {new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </p>
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                      <div className="p-4 bg-slate-50 border-t border-slate-100">
+                        <button 
+                          onClick={clearAll}
+                          className="w-full py-3 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-brand-600 transition-colors"
+                        >
+                          Clear All
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="w-px h-8 bg-slate-200 hidden md:block"></div>
+              </>
+            )}
 
             <div className="flex items-center gap-3">
               <div className="text-right hidden sm:block">
@@ -201,7 +280,7 @@ export default function Layout({ user, onLogout }: { user: any, onLogout: () => 
           </div>
         </header>
         
-        <div className="flex-1 overflow-y-auto p-8 lg:p-12 no-scrollbar">
+        <div className="flex-1 overflow-y-auto p-8 lg:p-12">
           <div className="max-w-7xl mx-auto">
             <Outlet />
           </div>

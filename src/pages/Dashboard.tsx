@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import Loader from '../components/Loader';
 import { 
   TrendingUp, Users, MessageSquare, Clock, Building2, 
   Calendar, CheckCircle2, LayoutDashboard, ArrowUpRight,
@@ -79,8 +80,12 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="flex items-center gap-4 p-2 bg-white rounded-2xl border border-slate-200 shadow-sm">
-          <div className="w-12 h-12 bg-brand-600 text-white rounded-xl flex items-center justify-center font-black text-lg shadow-lg shadow-brand-100">
-            {user.name?.[0] || 'U'}
+          <div className="w-12 h-12 bg-brand-600 text-white rounded-xl flex items-center justify-center font-black text-lg shadow-lg shadow-brand-100 overflow-hidden">
+            {user.profile_pic ? (
+              <img src={user.profile_pic} alt={user.name} className="w-full h-full object-cover" />
+            ) : (
+              user.name?.[0] || 'U'
+            )}
           </div>
           <div className="pr-4">
             <p className="text-sm font-black text-slate-900 leading-none">{user.name}</p>
@@ -90,7 +95,11 @@ export default function Dashboard() {
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {statCards.map((stat) => (
+        {loading ? (
+          <div className="col-span-full">
+            <Loader message="Syncing Intelligence..." />
+          </div>
+        ) : statCards.map((stat) => (
           <div key={stat.name} className="bg-white rounded-[2rem] border border-slate-200 p-8 shadow-xl shadow-slate-200/50 group hover:border-brand-600 transition-all">
             <div className="flex items-center justify-between mb-6">
               <div className="w-12 h-12 bg-slate-50 text-slate-600 rounded-2xl flex items-center justify-center group-hover:bg-brand-600 group-hover:text-white transition-all shadow-inner">

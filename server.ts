@@ -77,11 +77,14 @@ async function startServer() {
         const result = stmt.run(data.leadId, data.userId || null, data.type || 'internal', 'outbound', data.subject || null, data.content);
         const commId = result.lastInsertRowid;
 
-        // Handle Mentions
+        // Handle Mentions & Notifications
         if (data.mentions && Array.isArray(data.mentions)) {
           const mentionStmt = db.prepare('INSERT INTO mentions (communication_id, user_id) VALUES (?, ?)');
+          const notifyStmt = db.prepare('INSERT INTO notifications (user_id, type, message, link) VALUES (?, ?, ?, ?)');
+          
           data.mentions.forEach((mId: number) => {
             mentionStmt.run(commId, mId);
+            notifyStmt.run(mId, 'mention', `You were mentioned in a chat for lead #${data.leadId}`, `/messages?leadId=${data.leadId}`);
           });
         }
       } catch (err) {
@@ -95,6 +98,41 @@ async function startServer() {
   });
 
   // API Routes
+  app.post('/api/messages/inbound', authenticate, (req: any, res) => {
+    const { leadId, content, type } = req.body;
+    
+    try {
+      const lead = db.prepare('SELECT assigned_user_id, dealership_id FROM leads WHERE id = ?').get(leadId) as any;
+      if (!lead) return res.status(404).json({ error: 'Lead not found' });
+
+      const stmt = db.prepare('INSERT INTO communications (lead_id, type, direction, content) VALUES (?, ?, ?, ?)');
+      stmt.run(leadId, type || 'sms', 'inbound', content);
+
+      // Notify assigned user or dealership principal
+      const notifyUserId = lead.assigned_user_id || db.prepare(`
+        SELECT u.id FROM users u 
+        JOIN roles r ON u.role_id = r.id 
+        WHERE u.dealership_id = ? AND r.name = 'principal'
+      `).get(lead.dealership_id)?.id;
+
+      if (notifyUserId) {
+        db.prepare('INSERT INTO notifications (user_id, type, message, link) VALUES (?, ?, ?, ?)')
+          .run(notifyUserId, 'inbound_message', `New inbound message for lead #${leadId}`, `/messages?leadId=${leadId}`);
+      }
+
+      io.to(`lead-${leadId}`).emit('new-message', {
+        lead_id: leadId,
+        content,
+        type: type || 'sms',
+        direction: 'inbound',
+        created_at: new Date().toISOString()
+      });
+
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to process inbound message' });
+    }
+  });
   app.post('/api/auth/login', (req, res) => {
     const { email, password } = req.body;
     const user = db.prepare('SELECT u.*, r.name as role FROM users u JOIN roles r ON u.role_id = r.id WHERE email = ?').get(email) as any;
@@ -107,20 +145,25 @@ async function startServer() {
     const locationIds = locations.map(l => l.location_id);
 
     const token = jwt.sign({ id: user.id, role: user.role, dealershipId: user.dealership_id, locationIds }, JWT_SECRET, { expiresIn: '1d' });
-    res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role, dealershipId: user.dealership_id, locationIds } });
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role, dealershipId: user.dealership_id, locationIds, profile_pic: user.profile_pic } });
   });
 
   // Dealerships (Super Admin)
   app.get('/api/dealerships', authenticate, authorize(['super_admin']), (req, res) => {
-    const dealerships = db.prepare("SELECT * FROM dealerships WHERE status = 'active'").all();
+    const dealerships = db.prepare(`
+      SELECT d.*, u.name as principal_name, u.email as principal_email 
+      FROM dealerships d 
+      LEFT JOIN users u ON d.id = u.dealership_id AND u.role_id = (SELECT id FROM roles WHERE name = 'principal')
+      WHERE d.status = 'active'
+    `).all();
     res.json(dealerships);
   });
 
   app.post('/api/dealerships', authenticate, authorize(['super_admin']), (req, res) => {
-    const { name, principalName, principalEmail, principalPassword, locationName, locationAddress } = req.body;
+    const { name, profile_pic, principalName, principalEmail, principalPassword, locationName, locationAddress } = req.body;
     
     const result = db.transaction(() => {
-      const dealer = db.prepare('INSERT INTO dealerships (name) VALUES (?)').run(name);
+      const dealer = db.prepare('INSERT INTO dealerships (name, profile_pic) VALUES (?, ?)').run(name, profile_pic || null);
       const dealerId = dealer.lastInsertRowid;
 
       // Create Location
@@ -131,8 +174,8 @@ async function startServer() {
       const principalRole = db.prepare('SELECT id FROM roles WHERE name = ?').get('principal') as any;
       const hash = bcrypt.hashSync(principalPassword, 10);
       
-      const user = db.prepare('INSERT INTO users (dealership_id, role_id, name, email, password) VALUES (?, ?, ?, ?, ?)')
-        .run(dealerId, principalRole.id, principalName, principalEmail, hash);
+      const user = db.prepare('INSERT INTO users (dealership_id, role_id, name, email, password, profile_pic) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(dealerId, principalRole.id, principalName, principalEmail, hash, profile_pic || null);
       const userId = user.lastInsertRowid;
 
       // Link principal to the new location
@@ -145,8 +188,8 @@ async function startServer() {
   });
 
   app.put('/api/dealerships/:id', authenticate, authorize(['super_admin']), (req, res) => {
-    const { name } = req.body;
-    db.prepare('UPDATE dealerships SET name = ? WHERE id = ?').run(name, req.params.id);
+    const { name, profile_pic } = req.body;
+    db.prepare('UPDATE dealerships SET name = ?, profile_pic = ? WHERE id = ?').run(name, profile_pic, req.params.id);
     res.json({ success: true });
   });
 
@@ -195,6 +238,11 @@ async function startServer() {
   });
 
   app.delete('/api/locations/:id', authenticate, authorize(['super_admin', 'principal']), (req, res) => {
+    const location = db.prepare('SELECT is_default FROM locations WHERE id = ?').get(req.params.id) as any;
+    if (!location) return res.status(404).json({ error: 'Location not found' });
+    if (location.is_default) {
+      return res.status(400).json({ error: 'Default location cannot be deleted. Set another location as default first.' });
+    }
     db.prepare("UPDATE locations SET status = 'deleted' WHERE id = ?").run(req.params.id);
     res.json({ success: true });
   });
@@ -230,12 +278,19 @@ async function startServer() {
     res.json(users);
   });
 
-  app.post('/api/users', authenticate, authorize(['principal']), (req: any, res) => {
+  app.post('/api/users', authenticate, authorize(['principal', 'admin']), (req: any, res) => {
     const { name, email, password, roleName, locationIds } = req.body;
     
-    // Check for duplicate email
-    const existingUser = db.prepare('SELECT id FROM users WHERE email = ? AND status = "active"').get(email);
+    if (!name || !email || !password || !roleName) {
+      return res.status(400).json({ error: 'All fields are required.' });
+    }
+
+    // Check for duplicate email (even deleted ones to avoid unique constraint violation)
+    const existingUser = db.prepare('SELECT id, status FROM users WHERE email = ?').get(email) as any;
     if (existingUser) {
+      if (existingUser.status === 'deleted') {
+        return res.status(400).json({ error: 'This email belongs to a deleted user. Please contact support or use a different email.' });
+      }
       return res.status(400).json({ error: 'A user with this email already exists.' });
     }
 
@@ -252,30 +307,48 @@ async function startServer() {
     }
 
     const role = db.prepare('SELECT id FROM roles WHERE name = ?').get(roleName) as any;
-    const hash = bcrypt.hashSync(password, 10);
+    if (!role) {
+      return res.status(400).json({ error: 'Invalid role selected.' });
+    }
     
-    const result = db.transaction(() => {
-      const user = db.prepare('INSERT INTO users (dealership_id, role_id, name, email, password) VALUES (?, ?, ?, ?, ?)')
-        .run(req.user.dealershipId, role.id, name, email, hash);
-      const userId = user.lastInsertRowid;
+    try {
+      const hash = bcrypt.hashSync(password, 10);
+      
+      const result = db.transaction(() => {
+        const user = db.prepare('INSERT INTO users (dealership_id, role_id, name, email, password, profile_pic) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(req.user.dealershipId, role.id, name, email, hash, req.body.profile_pic || null);
+        const userId = user.lastInsertRowid;
 
-      if (locationIds && Array.isArray(locationIds)) {
-        const stmt = db.prepare('INSERT INTO user_locations (user_id, location_id) VALUES (?, ?)');
-        locationIds.forEach(lId => stmt.run(userId, lId));
-      }
-      return userId;
-    })();
-    
-    res.json({ id: result });
+        if (locationIds && Array.isArray(locationIds)) {
+          const stmt = db.prepare('INSERT INTO user_locations (user_id, location_id) VALUES (?, ?)');
+          locationIds.forEach(lId => stmt.run(userId, lId));
+        }
+        return userId;
+      })();
+      
+      res.json({ id: result });
+    } catch (err: any) {
+      console.error('User creation error:', err);
+      res.status(500).json({ error: err.message || 'Failed to create user.' });
+    }
   });
 
-  app.put('/api/users/:id', authenticate, authorize(['principal']), (req: any, res) => {
-    const { name, email, roleName, locationIds } = req.body;
+  app.put('/api/users/:id', authenticate, authorize(['principal', 'admin']), (req: any, res) => {
+    const { name, email, password, roleName, locationIds, profile_pic } = req.body;
     const role = db.prepare('SELECT id FROM roles WHERE name = ?').get(roleName) as any;
+    if (!role) {
+      return res.status(400).json({ error: 'Invalid role selected.' });
+    }
     
     db.transaction(() => {
-      db.prepare('UPDATE users SET name = ?, email = ?, role_id = ? WHERE id = ? AND dealership_id = ?')
-        .run(name, email, role.id, req.params.id, req.user.dealershipId);
+      if (password) {
+        const hash = bcrypt.hashSync(password, 10);
+        db.prepare('UPDATE users SET name = ?, email = ?, password = ?, role_id = ?, profile_pic = ? WHERE id = ? AND dealership_id = ?')
+          .run(name, email, hash, role.id, profile_pic, req.params.id, req.user.dealershipId);
+      } else {
+        db.prepare('UPDATE users SET name = ?, email = ?, role_id = ?, profile_pic = ? WHERE id = ? AND dealership_id = ?')
+          .run(name, email, role.id, profile_pic, req.params.id, req.user.dealershipId);
+      }
       
       db.prepare('DELETE FROM user_locations WHERE user_id = ?').run(req.params.id);
       if (locationIds && Array.isArray(locationIds)) {
@@ -286,7 +359,13 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  app.delete('/api/users/:id', authenticate, authorize(['principal']), (req: any, res) => {
+  app.put('/api/profile/pic', authenticate, (req: any, res) => {
+    const { profile_pic } = req.body;
+    db.prepare('UPDATE users SET profile_pic = ? WHERE id = ?').run(profile_pic, req.user.id);
+    res.json({ success: true });
+  });
+
+  app.delete('/api/users/:id', authenticate, authorize(['principal', 'admin']), (req: any, res) => {
     db.prepare("UPDATE users SET status = 'deleted' WHERE id = ? AND dealership_id = ?")
       .run(req.params.id, req.user.dealershipId);
     res.json({ success: true });
@@ -298,7 +377,12 @@ async function startServer() {
   });
 
   app.get('/api/leads/:id', authenticate, authorize(['principal', 'admin', 'user']), (req: any, res) => {
-    const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id) as any;
+    const lead = db.prepare(`
+      SELECT l.*, loc.name as location_name 
+      FROM leads l 
+      LEFT JOIN locations loc ON l.location_id = loc.id
+      WHERE l.id = ?
+    `).get(req.params.id) as any;
     if (!lead) return res.status(404).json({ error: 'Lead not found' });
     
     // RBAC check
@@ -310,7 +394,13 @@ async function startServer() {
   });
 
   app.get('/api/leads', authenticate, authorize(['principal', 'admin', 'user']), (req: any, res) => {
-    const leads = db.prepare('SELECT * FROM leads WHERE dealership_id = ? ORDER BY created_at DESC').all(req.user.dealershipId);
+    const leads = db.prepare(`
+      SELECT l.*, loc.name as location_name 
+      FROM leads l 
+      LEFT JOIN locations loc ON l.location_id = loc.id
+      WHERE l.dealership_id = ? 
+      ORDER BY l.created_at DESC
+    `).all(req.user.dealershipId);
     res.json(leads);
   });
 
@@ -331,31 +421,64 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  app.patch('/api/leads/:id/status', authenticate, authorize(['principal', 'admin', 'user']), (req: any, res) => {
+    const { status } = req.body;
+    db.prepare(`
+      UPDATE leads 
+      SET status = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND dealership_id = ?
+    `).run(status, req.params.id, req.user.dealershipId);
+    res.json({ success: true });
+  });
+
   app.get('/api/leads/:id/communications', authenticate, (req, res) => {
     const comms = db.prepare('SELECT * FROM communications WHERE lead_id = ? ORDER BY created_at ASC').all(req.params.id);
     res.json(comms);
   });
 
+  app.get('/api/dealership/details', authenticate, (req: any, res) => {
+    if (req.user.role === 'super_admin') return res.json({ name: 'Global Network', locations: [] });
+    
+    const dealership = db.prepare('SELECT name FROM dealerships WHERE id = ?').get(req.user.dealershipId) as any;
+    const locations = db.prepare('SELECT name FROM locations WHERE dealership_id = ? AND status = "active"').all(req.user.dealershipId) as any[];
+    
+    res.json({
+      name: dealership?.name || 'Dealership',
+      locations: locations.map(l => l.name)
+    });
+  });
+
   // Dashboard Stats
   app.get('/api/stats', authenticate, (req: any, res) => {
-    let totalLeads, activeDeals, unreadMessages;
+    let totalLeads, activeDeals, unreadMessages, totalDealerships, totalUsers;
     
     if (req.user.role === 'super_admin') {
-      totalLeads = { count: 0 };
-      activeDeals = { count: 0 };
-      unreadMessages = { count: 0 };
+      totalLeads = db.prepare('SELECT COUNT(*) as count FROM leads').get() as any;
+      activeDeals = db.prepare("SELECT COUNT(*) as count FROM leads WHERE status != 'closed'").get() as any;
+      unreadMessages = db.prepare("SELECT COUNT(*) as count FROM communications WHERE direction = 'inbound'").get() as any;
+      totalDealerships = db.prepare('SELECT COUNT(*) as count FROM dealerships WHERE status = "active"').get() as any;
+      totalUsers = db.prepare('SELECT COUNT(*) as count FROM users WHERE status = "active"').get() as any;
+      
+      return res.json({
+        totalLeads: totalLeads.count,
+        activeDeals: activeDeals.count,
+        unreadMessages: unreadMessages.count,
+        totalDealerships: totalDealerships.count,
+        totalUsers: totalUsers.count,
+        avgResponseTime: '12m'
+      });
     } else {
       totalLeads = db.prepare('SELECT COUNT(*) as count FROM leads WHERE dealership_id = ?').get(req.user.dealershipId) as any;
       activeDeals = db.prepare("SELECT COUNT(*) as count FROM leads WHERE dealership_id = ? AND status != 'closed'").get(req.user.dealershipId) as any;
       unreadMessages = db.prepare("SELECT COUNT(*) as count FROM communications c JOIN leads l ON c.lead_id = l.id WHERE l.dealership_id = ? AND c.direction = 'inbound'").get(req.user.dealershipId) as any;
+      
+      res.json({
+        totalLeads: totalLeads.count,
+        activeDeals: activeDeals.count,
+        unreadMessages: unreadMessages.count,
+        avgResponseTime: '12m'
+      });
     }
-    
-    res.json({
-      totalLeads: totalLeads.count,
-      activeDeals: activeDeals.count,
-      unreadMessages: unreadMessages.count,
-      avgResponseTime: '12m'
-    });
   });
 
   // Tasks
@@ -416,20 +539,21 @@ async function startServer() {
   // Notifications
   app.get('/api/notifications', authenticate, (req: any, res) => {
     const notifications = db.prepare(`
-      SELECT m.*, c.content, c.type, l.first_name, l.last_name, u.name as sender_name
-      FROM mentions m
-      JOIN communications c ON m.communication_id = c.id
-      JOIN leads l ON c.lead_id = l.id
-      JOIN users u ON c.user_id = u.id
-      WHERE m.user_id = ?
-      ORDER BY m.created_at DESC
+      SELECT * FROM notifications 
+      WHERE user_id = ? 
+      ORDER BY created_at DESC 
       LIMIT 20
     `).all(req.user.id);
     res.json(notifications);
   });
 
   app.put('/api/notifications/:id/read', authenticate, (req, res) => {
-    db.prepare('UPDATE mentions SET is_read = 1 WHERE id = ?').run(req.params.id);
+    db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
+  });
+
+  app.delete('/api/notifications', authenticate, (req: any, res) => {
+    db.prepare('DELETE FROM notifications WHERE user_id = ?').run(req.user.id);
     res.json({ success: true });
   });
   app.post('/api/webhooks/leads', (req, res) => {

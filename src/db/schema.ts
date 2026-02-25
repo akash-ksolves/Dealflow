@@ -18,13 +18,16 @@ export function initDb() {
   
   const dealerTableInfo = db.prepare("PRAGMA table_info(dealerships)").all() as any[];
   const dealerStatusCol = dealerTableInfo.find(c => c.name === 'status');
+  const dealerPicCol = dealerTableInfo.find(c => c.name === 'profile_pic');
   
   const commTableInfo = db.prepare("PRAGMA table_info(communications)").all() as any[];
   const subjectCol = commTableInfo.find(c => c.name === 'subject');
   
   const userLocTableInfo = db.prepare("PRAGMA table_info(user_locations)").all() as any[];
   
-  if ((dealershipIdCol?.notnull === 1) || !dealerStatusCol || !subjectCol || userLocTableInfo.length === 0) {
+  const notificationsTableInfo = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='notifications'").get();
+  
+  if ((dealershipIdCol?.notnull === 1) || !dealerStatusCol || !dealerPicCol || !subjectCol || userLocTableInfo.length === 0 || !notificationsTableInfo) {
     console.log('Migrating database: dropping old tables for schema update');
     db.exec(`
       DROP TABLE IF EXISTS tasks;
@@ -43,6 +46,7 @@ export function initDb() {
     CREATE TABLE IF NOT EXISTS dealerships (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
+      profile_pic TEXT,
       status TEXT DEFAULT 'active', -- 'active', 'deleted'
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -69,6 +73,7 @@ export function initDb() {
       name TEXT NOT NULL,
       email TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
+      profile_pic TEXT,
       status TEXT DEFAULT 'active',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (dealership_id) REFERENCES dealerships(id),
@@ -112,6 +117,17 @@ export function initDb() {
       content TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (lead_id) REFERENCES leads(id),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      type TEXT NOT NULL, -- 'mention', 'inbound_message'
+      message TEXT NOT NULL,
+      link TEXT,
+      is_read INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
 

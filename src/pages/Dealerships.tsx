@@ -1,8 +1,9 @@
 import { useState, useEffect, FormEvent } from 'react';
+import Loader from '../components/Loader';
 import { 
   Plus, Building2, User, Mail, Lock, Loader2, 
   Edit2, Trash2, MapPin, Check, ChevronRight,
-  Globe, Shield, Phone, X
+  Globe, Shield, Phone, X, Camera
 } from 'lucide-react';
 
 export default function Dealerships() {
@@ -17,6 +18,7 @@ export default function Dealerships() {
   
   const [dealerFormData, setDealerFormData] = useState({
     name: '',
+    profile_pic: '',
     principalName: '',
     principalEmail: '',
     principalPassword: '',
@@ -73,7 +75,7 @@ export default function Dealerships() {
         setIsDealerModalOpen(false);
         setEditingDealer(null);
         setDealerFormData({ 
-          name: '', principalName: '', principalEmail: '', principalPassword: '',
+          name: '', profile_pic: '', principalName: '', principalEmail: '', principalPassword: '',
           locationName: '', locationAddress: ''
         });
         fetchData();
@@ -141,6 +143,7 @@ export default function Dealerships() {
     setEditingDealer(dealer);
     setDealerFormData({
       name: dealer.name,
+      profile_pic: dealer.profile_pic || '',
       principalName: dealer.principal_name || '',
       principalEmail: dealer.principal_email || '',
       principalPassword: '', // Don't show password
@@ -186,10 +189,7 @@ export default function Dealerships() {
 
       <div className="grid grid-cols-1 gap-8">
         {loading ? (
-          <div className="p-20 text-center">
-            <Loader2 className="w-10 h-10 animate-spin text-brand-600 mx-auto mb-4" />
-            <p className="text-slate-400 font-medium italic">Loading management data...</p>
-          </div>
+          <Loader message="Loading Dealerships..." />
         ) : dealerships.length === 0 ? (
           <div className="p-20 text-center bg-white rounded-3xl border-2 border-dashed border-slate-200">
             <Building2 className="w-12 h-12 text-slate-200 mx-auto mb-4" />
@@ -200,8 +200,12 @@ export default function Dealerships() {
             <div key={dealer.id} className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50 overflow-hidden group transition-all hover:shadow-2xl hover:shadow-brand-100/20">
               <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex flex-col md:flex-row md:items-center justify-between gap-6">
                 <div className="flex items-center gap-6">
-                  <div className="w-16 h-16 bg-brand-600 text-white rounded-3xl flex items-center justify-center shadow-lg shadow-brand-100">
-                    <Building2 className="w-8 h-8" />
+                  <div className="w-16 h-16 bg-brand-600 text-white rounded-3xl flex items-center justify-center shadow-lg shadow-brand-100 overflow-hidden">
+                    {dealer.profile_pic ? (
+                      <img src={dealer.profile_pic} alt={dealer.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <Building2 className="w-8 h-8" />
+                    )}
                   </div>
                   <div>
                     <h2 className="text-2xl font-black tracking-tighter text-slate-900 uppercase">{dealer.name}</h2>
@@ -261,7 +265,9 @@ export default function Dealerships() {
                         </div>
                         <div className="flex gap-1 opacity-0 group-hover/loc:opacity-100 transition-opacity">
                           <button onClick={() => openEditLocation(loc)} className="p-2 text-slate-400 hover:text-brand-600 transition-colors"><Edit2 className="w-4 h-4" /></button>
-                          <button onClick={() => deleteLocation(loc.id)} className="p-2 text-slate-400 hover:text-red-600 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                          {loc.is_default !== 1 && (
+                            <button onClick={() => deleteLocation(loc.id)} className="p-2 text-slate-400 hover:text-red-600 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                          )}
                         </div>
                       </div>
                       <p className="text-xs text-slate-500 leading-relaxed line-clamp-2">{loc.address}</p>
@@ -291,16 +297,45 @@ export default function Dealerships() {
             </div>
 
             <form onSubmit={handleDealerSubmit} className="space-y-8">
-              <div className="space-y-4">
-                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Dealership Info</label>
-                <input
-                  required
-                  type="text"
-                  value={dealerFormData.name}
-                  onChange={(e) => setDealerFormData({...dealerFormData, name: e.target.value})}
-                  className="w-full px-6 py-4 bg-slate-50 border-none rounded-2xl focus:ring-4 focus:ring-brand-500/10 transition-all font-bold text-slate-900"
-                  placeholder="Dealership Name (e.g. Northside Motors)"
-                />
+              <div className="flex items-center gap-6">
+                <div className="relative group">
+                  <div className="w-24 h-24 rounded-3xl bg-slate-100 flex items-center justify-center text-2xl font-black text-slate-300 border-4 border-white shadow-inner overflow-hidden">
+                    {dealerFormData.profile_pic ? (
+                      <img src={dealerFormData.profile_pic} alt="Preview" className="w-full h-full object-cover" />
+                    ) : (
+                      <Building2 className="w-8 h-8" />
+                    )}
+                  </div>
+                  <label className="absolute -bottom-2 -right-2 p-2.5 bg-brand-600 text-white rounded-xl shadow-lg shadow-brand-100 hover:scale-110 transition-transform cursor-pointer">
+                    <Camera className="w-4 h-4" />
+                    <input 
+                      type="file" 
+                      className="hidden" 
+                      accept="image/*" 
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onloadend = () => {
+                            setDealerFormData({...dealerFormData, profile_pic: reader.result as string});
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }} 
+                    />
+                  </label>
+                </div>
+                <div className="flex-1 space-y-4">
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Dealership Info</label>
+                  <input
+                    required
+                    type="text"
+                    value={dealerFormData.name}
+                    onChange={(e) => setDealerFormData({...dealerFormData, name: e.target.value})}
+                    className="w-full px-6 py-4 bg-slate-50 border-none rounded-2xl focus:ring-4 focus:ring-brand-500/10 transition-all font-bold text-slate-900"
+                    placeholder="Dealership Name (e.g. Northside Motors)"
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
